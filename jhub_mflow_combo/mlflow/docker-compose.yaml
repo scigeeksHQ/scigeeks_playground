@@ -1,0 +1,104 @@
+version: '3.3'
+services:
+    db:
+        restart: always
+        image: mysql/mysql-server:5.7.41
+        container_name: mlflow_db
+        expose:
+            - "3306"
+        networks:
+            - backend
+        environment:
+            - MYSQL_DATABASE=mlflow
+            - MYSQL_USER=admin
+            - MYSQL_PASSWORD=testmepls
+            - MYSQL_ROOT_PASSWORD=testmeplsroot
+        volumes:
+            - ./db:/var/lib/mysql
+    mlflow:
+        restart: always
+        build: ./mlflow
+        image: mlflow_server
+        container_name: mlflow_server
+        environment:
+          - AWS_ACCESS_KEY_ID=
+          - AWS_SECRET_ACCESS_KEY=
+          - MLFLOW_S3_ENDPOINT_URL=https://minio.131.154.99.166.myip.cloud.infn.it
+          - MLFLOW_S3_IGNORE_TLS=true
+        expose:
+            - "5000"
+        networks:
+            - frontend
+            - backend
+        command: mlflow server --dev --app-name basic-auth --host 0.0.0.0 --artifacts-destination s3://mlartifacts --backend-store-uri mysql+pymysql://admin:testmepls@db:3306/mlflow
+        volumes:
+          - ./basic_auth.ini:/usr/local/lib/python3.8/site-packages/mlflow/server/auth/basic_auth.ini
+          - ./mlflow/auth_db:/auth_db
+        labels:
+          - "traefik.enable=true"
+          - "traefik.http.routers.web.service=mlflow"
+          - "traefik.http.routers.web.rule=Host(`131.154.99.166.myip.cloud.infn.it`)"
+          - "traefik.http.routers.web.entrypoints=websecure"
+          - "traefik.http.routers.web.tls.certresolver=myresolver"
+          - "traefik.http.services.mlflow.loadbalancer.server.port=5000"
+          - "traefik.docker.network=mlflow_frontend"
+    minio:
+       # taken from: https://github.com/minio/minio/tags
+       image: quay.io/minio/minio:RELEASE.2024-04-18T19-09-19Z
+       volumes:
+         - ./minio-data:/data
+       command:
+         - server
+         - /data
+         - --console-address
+         - ":9001"
+       environment:
+         - MINIO_ROOT_USER=
+         - MINIO_ROOT_PASSWORD=
+         - MINIO_SERVER_URL=https://minio.131.154.99.166.myip.cloud.infn.it
+         - MINIO_BROWSER_REDIRECT_URL=https://console.131.154.99.166.myip.cloud.infn.it
+       labels:
+         - "traefik.enable=true"
+         - "traefik.http.routers.minio.service=minio"
+         - "traefik.http.routers.minio.rule=Host(`minio.131.154.99.166.myip.cloud.infn.it`)"
+         - "traefik.http.routers.minio.entrypoints=websecure"
+         - "traefik.http.routers.minio.tls.certresolver=myresolver"
+         - "traefik.http.services.minio.loadbalancer.server.port=9000"
+         - "traefik.http.routers.minio-console.service=minio-console"
+         - "traefik.http.routers.minio-console.rule=Host(`console.131.154.99.166.myip.cloud.infn.it`)"
+         - "traefik.http.routers.minio-console.entrypoints=websecure"
+         - "traefik.http.routers.minio-console.tls.certresolver=myresolver"
+         - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    traefik:
+        image: "traefik:v2.10"
+        container_name: "traefik"
+        command:
+          - "--log.level=DEBUG"
+          - "--api.insecure=true"
+          - "--providers.docker=true"
+          - "--providers.docker.exposedbydefault=false"
+          - "--entrypoints.web.address=:80"
+          - "--entrypoints.websecure.address=:443"
+          - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+          - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+          - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+          - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+          - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+          - "--certificatesresolvers.myresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+          - "--certificatesresolvers.myresolver.acme.email= "
+          - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+        ports:
+          - "80:80"
+          - "443:443"
+          - "8080:8080"
+        volumes:
+          - "./letsencrypt:/letsencrypt"
+          - "/var/run/docker.sock:/var/run/docker.sock:ro"
+        network_mode: host
+        #networks:
+        #  - frontend
+networks:
+    frontend:
+        driver: bridge
+    backend:
+        driver: bridge

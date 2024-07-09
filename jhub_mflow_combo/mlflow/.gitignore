@@ -1,0 +1,4 @@
+db
+letsencrypt
+minio-data
+mlflow/auth_db
